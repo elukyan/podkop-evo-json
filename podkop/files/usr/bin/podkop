@@ -917,7 +917,11 @@ configure_outbound_handler() {
             fi
 
             # Parse subscription outbounds
-            config="$(sing_box_cf_add_subscription_outbounds "$config" "$section" "$subscription_json_path")"
+            if ! sing_box_cf_add_subscription_outbounds "$config" "$section" "$subscription_json_path" > /dev/null; then
+                log "No proxy outbounds found in subscription for section '$section'. Aborted." "fatal"
+                exit 1
+            fi
+            config="$SING_BOX_CF_LAST_CONFIG"
 
             if [ -z "$SUBSCRIPTION_OUTBOUND_TAGS" ]; then
                 log "No proxy outbounds found in subscription for section '$section'. Aborted." "fatal"

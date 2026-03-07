@@ -349,6 +349,7 @@ sing_box_cf_add_subscription_outbounds() {
 
     SUBSCRIPTION_OUTBOUND_TAGS=""
     SUBSCRIPTION_OUTBOUND_NAMES=""
+    SING_BOX_CF_LAST_CONFIG="$config"
 
     if [ ! -f "$subscription_json_path" ]; then
         log "Subscription JSON file not found: $subscription_json_path" "error"
@@ -421,6 +422,7 @@ sing_box_cf_add_subscription_outbounds() {
     done
 
     log "Added $((i - 1)) subscription outbounds for section '$section'" "info"
+    SING_BOX_CF_LAST_CONFIG="$config"
 
     echo "$config"
 }
