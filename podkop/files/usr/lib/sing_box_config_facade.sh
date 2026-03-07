@@ -328,3 +328,99 @@ sing_box_cf_add_single_key_reject_rule() {
 
     echo "$config"
 }
+
+#######################################
+# Parse a sing-box subscription JSON and add all proxy outbounds to the configuration.
+# Filters out non-proxy types (selector, urltest, direct, dns, block).
+# Uses 'tag' field (or 'remark' if present) as display name for each outbound.
+# Arguments:
+#   config: string (JSON), sing-box configuration to modify
+#   section: string, the UCI section name
+#   subscription_json_path: string, path to the downloaded subscription JSON file
+# Outputs:
+#   Writes updated JSON configuration to stdout
+#   Sets global variable SUBSCRIPTION_OUTBOUND_TAGS (comma-separated list of tags)
+#   Sets global variable SUBSCRIPTION_OUTBOUND_NAMES (newline-separated list of display names)
+#######################################
+sing_box_cf_add_subscription_outbounds() {
+    local config="$1"
+    local section="$2"
+    local subscription_json_path="$3"
+
+    SUBSCRIPTION_OUTBOUND_TAGS=""
+    SUBSCRIPTION_OUTBOUND_NAMES=""
+
+    if [ ! -f "$subscription_json_path" ]; then
+        log "Subscription JSON file not found: $subscription_json_path" "error"
+        echo "$config"
+        return 1
+    fi
+
+    # Extract proxy outbounds from subscription JSON
+    # Filter out non-proxy types: selector, urltest, direct, dns, block
+    local outbounds_count
+    outbounds_count=$(jq -r '[.outbounds[] | select(
+        .type != "selector" and
+        .type != "urltest" and
+        .type != "direct" and
+        .type != "dns" and
+        .type != "block"
+    )] | length' "$subscription_json_path" 2>/dev/null)
+
+    if [ -z "$outbounds_count" ] || [ "$outbounds_count" -eq 0 ]; then
+        log "No proxy outbounds found in subscription JSON" "error"
+        echo "$config"
+        return 1
+    fi
+
+    log "Found $outbounds_count proxy outbounds in subscription" "info"
+
+    local i=1
+    local outbound_json display_name outbound_tag
+
+    while [ "$i" -le "$outbounds_count" ]; do
+        # Extract the i-th proxy outbound as raw JSON
+        outbound_json=$(jq -c "[.outbounds[] | select(
+            .type != \"selector\" and
+            .type != \"urltest\" and
+            .type != \"direct\" and
+            .type != \"dns\" and
+            .type != \"block\"
+        )][$i - 1]" "$subscription_json_path" 2>/dev/null)
+
+        if [ -z "$outbound_json" ] || [ "$outbound_json" = "null" ]; then
+            i=$((i + 1))
+            continue
+        fi
+
+        # Get display name: prefer remark, then tag, then fallback
+        display_name=$(echo "$outbound_json" | jq -r '.remark // .tag // "server-'"$i"'"' 2>/dev/null)
+
+        # Create the tag in podkop format
+        outbound_tag="$(get_outbound_tag_by_section "$section-$i")"
+
+        # Remove tag from raw outbound (it will be set by sing_box_cm_add_raw_outbound)
+        local clean_outbound
+        clean_outbound=$(echo "$outbound_json" | jq -c 'del(.tag) | del(.remark)' 2>/dev/null)
+
+        config=$(sing_box_cm_add_raw_outbound "$config" "$outbound_tag" "$clean_outbound")
+
+        if [ -z "$SUBSCRIPTION_OUTBOUND_TAGS" ]; then
+            SUBSCRIPTION_OUTBOUND_TAGS="$outbound_tag"
+        else
+            SUBSCRIPTION_OUTBOUND_TAGS="$SUBSCRIPTION_OUTBOUND_TAGS,$outbound_tag"
+        fi
+
+        if [ -z "$SUBSCRIPTION_OUTBOUND_NAMES" ]; then
+            SUBSCRIPTION_OUTBOUND_NAMES="$display_name"
+        else
+            SUBSCRIPTION_OUTBOUND_NAMES="$(printf '%s\n%s' "$SUBSCRIPTION_OUTBOUND_NAMES" "$display_name")"
+        fi
+
+        i=$((i + 1))
+    done
+
+    log "Added $((i - 1)) subscription outbounds for section '$section'" "info"
+
+    echo "$config"
+}
