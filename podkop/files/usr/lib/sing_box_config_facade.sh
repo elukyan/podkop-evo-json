@@ -378,7 +378,7 @@ sing_box_cf_add_subscription_outbounds() {
 
     local i=1
     local added_count=0
-    local outbound_json display_name outbound_tag outbound_type outbound_tls_enabled
+    local outbound_json display_name outbound_tag outbound_type outbound_tls_enabled preferred_tag base_tag tag_suffix
 
     while [ "$i" -le "$outbounds_count" ]; do
         # Extract the i-th proxy outbound as raw JSON
@@ -408,8 +408,19 @@ sing_box_cf_add_subscription_outbounds() {
             continue
         fi
 
-        # Create the tag in podkop format
-        outbound_tag="$(get_outbound_tag_by_section "$section-$i")"
+        # Keep original tag from the subscription for dashboard readability.
+        preferred_tag=$(echo "$outbound_json" | jq -r '.tag // .remark // "server-'"$i"'"' 2>/dev/null)
+        if [ -z "$preferred_tag" ] || [ "$preferred_tag" = "null" ]; then
+            preferred_tag="server-$i"
+        fi
+
+        base_tag="$preferred_tag"
+        outbound_tag="$base_tag"
+        tag_suffix=1
+        while printf '%s' "$config" | jq -e --arg tag "$outbound_tag" '.outbounds[]? | select(.tag == $tag)' > /dev/null 2>&1; do
+            outbound_tag="${base_tag}-$tag_suffix"
+            tag_suffix=$((tag_suffix + 1))
+        done
 
         # Remove tag from raw outbound (it will be set by sing_box_cm_add_raw_outbound)
         local clean_outbound
@@ -422,6 +433,19 @@ sing_box_cf_add_subscription_outbounds() {
             i=$((i + 1))
             continue
         fi
+
+        # Validate against current sing-box version and skip unsupported outbounds.
+        local validation_tmp
+        validation_tmp="$(mktemp)"
+        sing_box_cm_save_config_to_file "$updated_config" "$validation_tmp"
+        if ! sing-box -c "$validation_tmp" check > /dev/null 2>&1; then
+            rm -f "$validation_tmp"
+            log "Skip unsupported outbound for current sing-box: '$display_name'" "warn"
+            i=$((i + 1))
+            continue
+        fi
+        rm -f "$validation_tmp"
+
         config="$updated_config"
 
         if [ -z "$SUBSCRIPTION_OUTBOUND_TAGS" ]; then
