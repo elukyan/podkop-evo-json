@@ -686,6 +686,8 @@ subscription_update() {
 
         mkdir -p "$TMP_SUBSCRIPTION_FOLDER"
         subscription_json_path="$TMP_SUBSCRIPTION_FOLDER/${section}.json"
+        local subscription_url_cache_path
+        subscription_url_cache_path="$TMP_SUBSCRIPTION_FOLDER/${section}.url"
 
         echolog "📥 Updating subscription for section '$section'..."
 
@@ -701,6 +703,7 @@ subscription_update() {
             return
         fi
 
+        printf '%s' "$subscription_url" > "$subscription_url_cache_path"
         local outbounds_count
         outbounds_count=$(jq -r '[.outbounds[] | select(
             .type != "selector" and
@@ -902,9 +905,29 @@ configure_outbound_handler() {
 
             mkdir -p "$TMP_SUBSCRIPTION_FOLDER"
             subscription_json_path="$TMP_SUBSCRIPTION_FOLDER/${section}.json"
+            local subscription_url_cache_path cached_subscription_url should_download
+            subscription_url_cache_path="$TMP_SUBSCRIPTION_FOLDER/${section}.url"
+            should_download=0
 
-            # Download subscription if not cached or force update
-            if [ ! -f "$subscription_json_path" ]; then
+            if [ ! -f "$subscription_json_path" ] || [ ! -s "$subscription_json_path" ]; then
+                should_download=1
+            fi
+
+            if [ -f "$subscription_url_cache_path" ]; then
+                cached_subscription_url="$(cat "$subscription_url_cache_path" 2>/dev/null)"
+            else
+                cached_subscription_url=""
+            fi
+
+            if [ "$cached_subscription_url" != "$subscription_url" ]; then
+                if [ -n "$cached_subscription_url" ]; then
+                    log "Subscription URL changed for section '$section', refreshing cache" "debug"
+                fi
+                should_download=1
+                rm -f "$subscription_json_path"
+            fi
+
+            if [ "$should_download" -eq 1 ]; then
                 log "Downloading subscription for section '$section'"
                 local service_proxy_address
                 service_proxy_address="$(get_service_proxy_address 2>/dev/null || echo '')"
@@ -914,6 +937,8 @@ configure_outbound_handler() {
                     log "Failed to download subscription for section '$section'. Aborted." "fatal"
                     exit 1
                 fi
+
+                printf '%s' "$subscription_url" > "$subscription_url_cache_path"
             fi
 
             # Parse subscription outbounds
@@ -2477,6 +2502,7 @@ clash_api() {
 
     get_proxy_latency)
         local proxy_tag="$2"
+        local encoded_proxy_tag
         local timeout="${3:-2000}"
 
         if [ -z "$proxy_tag" ]; then
@@ -2484,7 +2510,9 @@ clash_api() {
             return 1
         fi
 
-        curl -G -s "$CLASH_URL/proxies/$proxy_tag/delay" \
+        encoded_proxy_tag=$(printf '%s' "$proxy_tag" | jq -sRr @uri)
+
+        curl -G -s "$CLASH_URL/proxies/$encoded_proxy_tag/delay" \
             --header "$auth_header" \
             --data-urlencode "url=$TEST_URL" \
             --data-urlencode "timeout=$timeout" | jq .
@@ -2492,6 +2520,7 @@ clash_api() {
 
     get_group_latency)
         local group_tag="$2"
+        local encoded_group_tag
         local timeout="${3:-5000}"
 
         if [ -z "$group_tag" ]; then
@@ -2499,7 +2528,9 @@ clash_api() {
             return 1
         fi
 
-        curl -G -s "$CLASH_URL/group/$group_tag/delay" \
+        encoded_group_tag=$(printf '%s' "$group_tag" | jq -sRr @uri)
+
+        curl -G -s "$CLASH_URL/group/$encoded_group_tag/delay" \
             --header "$auth_header" \
             --data-urlencode "url=$TEST_URL" \
             --data-urlencode "timeout=$timeout" | jq .
@@ -2509,6 +2540,10 @@ clash_api() {
         local group_tag="$2"
         local proxy_tag="$3"
 
+        local encoded_group_tag payload
+        encoded_group_tag=$(printf '%s' "$group_tag" | jq -sRr @uri)
+        payload=$(jq -cn --arg name "$proxy_tag" '{name:$name}')
+
         if [ -z "$group_tag" ] || [ -z "$proxy_tag" ]; then
             echo '{"error":"group_tag and proxy_tag required"}' | jq .
             return 1
@@ -2516,9 +2551,10 @@ clash_api() {
 
         local response
         response=$(
-            curl -X PUT -s -w "\n%{http_code}" "$CLASH_URL/proxies/$group_tag" \
+            curl -X PUT -s -w "\n%{http_code}" "$CLASH_URL/proxies/$encoded_group_tag" \
                 --header "$auth_header" \
-                --data-raw "{\"name\":\"$proxy_tag\"}"
+                --header "Content-Type: application/json" \
+                --data-raw "$payload"
         )
 
         local http_code
@@ -2528,15 +2564,15 @@ clash_api() {
 
         case "$http_code" in
         204)
-            echo "{\"success\":true,\"group\":\"$group_tag\",\"proxy\":\"$proxy_tag\"}" | jq .
+            jq -n --arg group "$group_tag" --arg proxy "$proxy_tag" '{success:true,group:$group,proxy:$proxy}'
             ;;
         404)
-            echo "{\"success\":false,\"error\":\"group_not_found\",\"message\":\"$group_tag does not exist\"}" | jq .
+            jq -n --arg group "$group_tag" '{success:false,error:"group_not_found",message:($group + " does not exist")}'
             return 1
             ;;
         400)
             if echo "$body" | grep -q "not found"; then
-                echo "{\"success\":false,\"error\":\"proxy_not_found\",\"message\":\"$proxy_tag not found in group $group_tag\"}" | jq .
+                jq -n --arg proxy "$proxy_tag" --arg group "$group_tag" '{success:false,error:"proxy_not_found",message:($proxy + " not found in group " + $group)}'
             else
                 echo '{"success":false,"error":"bad_request","message":"Invalid request"}' | jq .
             fi

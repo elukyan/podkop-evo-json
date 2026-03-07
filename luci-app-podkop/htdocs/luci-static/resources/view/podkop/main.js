@@ -579,9 +579,17 @@ async function callBaseMethod(method, args = [], command = "/usr/bin/podkop") {
   });
   if (response.stdout) {
     try {
+      const data = JSON.parse(response.stdout);
+      if (data && typeof data === "object" && data.success === false) {
+        return {
+          success: false,
+          data,
+          error: data.message || data.error || ""
+        };
+      }
       return {
         success: true,
-        data: JSON.parse(response.stdout)
+        data
       };
     } catch (_e) {
       return {
@@ -778,7 +786,7 @@ async function getDashboardSections() {
         }));
         return {
           withTagSelect: true,
-          code: selector?.code || section[".name"],
+          code: selector?.code || section[".name"] + "-out",
           displayName: section[".name"],
           outbounds
         };
@@ -799,7 +807,7 @@ async function getDashboardSections() {
         }));
         return {
           withTagSelect: true,
-          code: selector?.code || section[".name"],
+          code: selector?.code || section[".name"] + "-out",
           displayName: section[".name"],
           outbounds: [
             {
@@ -829,7 +837,7 @@ async function getDashboardSections() {
         }));
         return {
           withTagSelect: true,
-          code: selector?.code || section[".name"],
+          code: selector?.code || section[".name"] + "-out",
           displayName: section[".name"],
           outbounds: [
             {
@@ -2115,7 +2123,10 @@ async function connectToClashSockets() {
   );
 }
 async function handleChooseOutbound(selector, tag) {
-  await PodkopShellMethods.setClashApiGroupProxy(selector, tag);
+  const response = await PodkopShellMethods.setClashApiGroupProxy(selector, tag);
+  if (!response.success || response.data?.success === false) {
+    showToast(response.data?.message || _("Failed to switch proxy"), "error");
+  }
   await fetchDashboardSections();
 }
 async function handleTestGroupLatency(tag) {
