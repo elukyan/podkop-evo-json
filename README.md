@@ -94,7 +94,7 @@ wget -O /etc/config/podkop https://raw.githubusercontent.com/yandexru45/podkop-e
 # ToDo
 
 > [!IMPORTANT]  
-> PR принимаются только по issues, у которых стоит label "enhancement". Либо по согласованию с авторами в ТГ-чате. Остальные PR на данный момент не рассматриваются.
+> PR принимаются только по согласованию с авторами в ТГ-чате. Остальные PR на данный момент не рассматриваются. Не тратьте зря своё время.
 
 ## Будущее
 - [x] [Подписка](https://github.com/itdoginfo/podkop/issues/118) — **реализовано в этом форке!**
