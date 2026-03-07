@@ -377,7 +377,8 @@ sing_box_cf_add_subscription_outbounds() {
     log "Found $outbounds_count proxy outbounds in subscription" "info"
 
     local i=1
-    local outbound_json display_name outbound_tag
+    local added_count=0
+    local outbound_json display_name outbound_tag outbound_type outbound_tls_enabled
 
     while [ "$i" -le "$outbounds_count" ]; do
         # Extract the i-th proxy outbound as raw JSON
@@ -397,6 +398,16 @@ sing_box_cf_add_subscription_outbounds() {
         # Get display name: prefer remark, then tag, then fallback
         display_name=$(echo "$outbound_json" | jq -r '.remark // .tag // "server-'"$i"'"' 2>/dev/null)
 
+        outbound_type=$(echo "$outbound_json" | jq -r '.type // ""' 2>/dev/null)
+        outbound_tls_enabled=$(echo "$outbound_json" | jq -r '.tls.enabled // false' 2>/dev/null)
+
+        # sing-box does not support top-level tls field for shadowsocks outbound.
+        if [ "$outbound_type" = "shadowsocks" ] && [ "$outbound_tls_enabled" = "true" ]; then
+            log "Skip unsupported Shadowsocks outbound with tls: '$display_name'" "warn"
+            i=$((i + 1))
+            continue
+        fi
+
         # Create the tag in podkop format
         outbound_tag="$(get_outbound_tag_by_section "$section-$i")"
 
@@ -404,7 +415,14 @@ sing_box_cf_add_subscription_outbounds() {
         local clean_outbound
         clean_outbound=$(echo "$outbound_json" | jq -c 'del(.tag) | del(.remark)' 2>/dev/null)
 
-        config=$(sing_box_cm_add_raw_outbound "$config" "$outbound_tag" "$clean_outbound")
+        local updated_config
+        updated_config=$(sing_box_cm_add_raw_outbound "$config" "$outbound_tag" "$clean_outbound" 2>/dev/null)
+        if [ -z "$updated_config" ]; then
+            log "Skip invalid outbound from subscription: '$display_name'" "warn"
+            i=$((i + 1))
+            continue
+        fi
+        config="$updated_config"
 
         if [ -z "$SUBSCRIPTION_OUTBOUND_TAGS" ]; then
             SUBSCRIPTION_OUTBOUND_TAGS="$outbound_tag"
@@ -418,10 +436,11 @@ sing_box_cf_add_subscription_outbounds() {
             SUBSCRIPTION_OUTBOUND_NAMES="$(printf '%s\n%s' "$SUBSCRIPTION_OUTBOUND_NAMES" "$display_name")"
         fi
 
+        added_count=$((added_count + 1))
         i=$((i + 1))
     done
 
-    log "Added $((i - 1)) subscription outbounds for section '$section'" "info"
+    log "Added $added_count subscription outbounds for section '$section'" "info"
     SING_BOX_CF_LAST_CONFIG="$config"
 
     echo "$config"
