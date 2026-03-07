@@ -37,7 +37,7 @@ function createSectionContent(section) {
     _("Proxy Configuration URL"),
     _("vless://, ss://, trojan://, socks4/5://, hy2/hysteria2:// links")
   );
-  o.depends("proxy_config_type", "url");
+  o.depends({ connection_type: "proxy", proxy_config_type: "url" });
   o.rows = 5;
   // Enable soft wrapping for multi-line proxy URLs (e.g., for URLTest proxy links)
   o.wrap = "soft";
@@ -66,7 +66,7 @@ function createSectionContent(section) {
     _("Outbound Configuration"),
     _("Enter complete outbound configuration in JSON format"),
   );
-  o.depends("proxy_config_type", "outbound");
+  o.depends({ connection_type: "proxy", proxy_config_type: "outbound" });
   o.rows = 10;
   o.validate = function (section_id, value) {
     // Optional
@@ -89,7 +89,7 @@ function createSectionContent(section) {
     _("Subscription URL"),
     _("Enter the subscription URL to fetch proxy configurations from your provider"),
   );
-  o.depends("proxy_config_type", "subscription");
+  o.depends({ connection_type: "proxy", proxy_config_type: "subscription" });
   o.placeholder = "https://example.com/api/sub";
   o.rmempty = false;
   o.validate = function (section_id, value) {
@@ -119,7 +119,7 @@ function createSectionContent(section) {
   o.value("12h", _("Every 12 hours"));
   o.value("1d", _("Every day"));
   o.default = "1h";
-  o.depends("proxy_config_type", "subscription");
+  o.depends({ connection_type: "proxy", proxy_config_type: "subscription" });
 
   o = section.option(
     form.DynamicList,
@@ -127,7 +127,7 @@ function createSectionContent(section) {
     _("Selector Proxy Links"),
     _("vless://, ss://, trojan://, socks4/5://, hy2/hysteria2:// links")
   );
-  o.depends("proxy_config_type", "selector");
+  o.depends({ connection_type: "proxy", proxy_config_type: "selector" });
   o.rmempty = false;
   o.validate = function (section_id, value) {
     // Optional
@@ -150,7 +150,7 @@ function createSectionContent(section) {
     _("URLTest Proxy Links"),
     _("vless://, ss://, trojan://, socks4/5://, hy2/hysteria2:// links")
   );
-  o.depends("proxy_config_type", "urltest");
+  o.depends({ connection_type: "proxy", proxy_config_type: "urltest" });
   o.rmempty = false;
   o.validate = function (section_id, value) {
     // Optional
@@ -178,8 +178,8 @@ function createSectionContent(section) {
   o.value("3m", _("Every 3 minutes"));
   o.value("5m", _("Every 5 minutes"));
   o.default = "3m";
-  o.depends("proxy_config_type", "urltest");
-  o.depends("proxy_config_type", "subscription");
+  o.depends({ connection_type: "proxy", proxy_config_type: "urltest" });
+  o.depends({ connection_type: "proxy", proxy_config_type: "subscription" });
 
   o = section.option(
     form.Value,
@@ -189,8 +189,8 @@ function createSectionContent(section) {
   );
   o.default = "50";
   o.rmempty = false;
-  o.depends("proxy_config_type", "urltest");
-  o.depends("proxy_config_type", "subscription");
+  o.depends({ connection_type: "proxy", proxy_config_type: "urltest" });
+  o.depends({ connection_type: "proxy", proxy_config_type: "subscription" });
   o.validate = function (section_id, value) {
     if (!value || value.length === 0) {
       return true;
@@ -217,8 +217,8 @@ function createSectionContent(section) {
   o.value("https://connectivity-check.ubuntu.com", "https://connectivity-check.ubuntu.com (Ubuntu)")
   o.default = "https://www.gstatic.com/generate_204";
   o.rmempty = false;
-  o.depends("proxy_config_type", "urltest");
-  o.depends("proxy_config_type", "subscription");
+  o.depends({ connection_type: "proxy", proxy_config_type: "urltest" });
+  o.depends({ connection_type: "proxy", proxy_config_type: "subscription" });
 
   o.validate = function (section_id, value) {
     if (!value || value.length === 0) {
@@ -723,7 +723,10 @@ function createSectionContent(section) {
       "Make sure the selected port is not used by another service",
     ),
   );
-  o.rmempty = false;
+  o.default = "2080";
+  o.placeholder = "2080";
+  o.datatype = "port";
+  o.rmempty = true;
   o.depends("mixed_proxy_enabled", "1");
 }
 

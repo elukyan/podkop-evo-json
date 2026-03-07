@@ -78,23 +78,63 @@ check_requirements() {
     if has_outbound_section; then
         log "Outbound section found" "debug"
     else
-        log "Outbound section not found. Please check your configuration file (missing proxy_string, selector_proxy_links, urltest_proxy_links, outbound_json, or interface). Aborted." "error"
+        log "Outbound section not found. Please check your configuration file (missing proxy_string, selector_proxy_links, urltest_proxy_links, subscription_url, outbound_json, or interface according to connection_type/proxy_config_type). Aborted." "error"
         exit 1
     fi
 }
 
+section_has_configured_outbound() {
+    local section="$1"
+    local connection_type proxy_config_type
+
+    config_get connection_type "$section" "connection_type"
+
+    case "$connection_type" in
+    proxy)
+        config_get proxy_config_type "$section" "proxy_config_type" "url"
+
+        case "$proxy_config_type" in
+        url)
+            local proxy_string
+            config_get proxy_string "$section" "proxy_string"
+            [ -n "$proxy_string" ] && return 0
+            ;;
+        selector)
+            local selector_proxy_links
+            config_get selector_proxy_links "$section" "selector_proxy_links"
+            [ -n "$selector_proxy_links" ] && return 0
+            ;;
+        urltest)
+            local urltest_proxy_links
+            config_get urltest_proxy_links "$section" "urltest_proxy_links"
+            [ -n "$urltest_proxy_links" ] && return 0
+            ;;
+        outbound)
+            local outbound_json
+            config_get outbound_json "$section" "outbound_json"
+            [ -n "$outbound_json" ] && return 0
+            ;;
+        subscription)
+            local subscription_url
+            config_get subscription_url "$section" "subscription_url"
+            [ -n "$subscription_url" ] && return 0
+            ;;
+        esac
+        ;;
+    vpn)
+        local interface
+        config_get interface "$section" "interface"
+        [ -n "$interface" ] && return 0
+        ;;
+    esac
+
+    return 1
+}
+
 _check_outbound_section() {
     local section="$1"
-    local proxy_string interface outbound_json urltest_proxy_links
 
-    config_get proxy_string "$section" "proxy_string"
-    config_get selector_proxy_links "$section" "selector_proxy_links"
-    config_get urltest_proxy_links "$section" "urltest_proxy_links"
-    config_get outbound_json "$section" "outbound_json"
-    config_get interface "$section" "interface"
-
-    if [ -n "$proxy_string" ] || [ -n "$selector_proxy_links" ] || [ -n "$urltest_proxy_links" ] ||
-        [ -n "$outbound_json" ] || [ -n "$interface" ]; then
+    if section_has_configured_outbound "$section"; then
         section_exists=0
     fi
 }
@@ -482,7 +522,12 @@ remove_cron_job() {
 
 add_subscription_cron_job() {
     local section="$1"
-    local proxy_config_type subscription_update_interval cron_job
+    local connection_type proxy_config_type subscription_update_interval cron_job
+
+    config_get connection_type "$section" "connection_type"
+    if [ "$connection_type" != "proxy" ]; then
+        return
+    fi
 
     config_get proxy_config_type "$section" "proxy_config_type"
     if [ "$proxy_config_type" != "subscription" ]; then
@@ -599,7 +644,13 @@ subscription_update() {
 
     _check_subscription_section() {
         local section="$1"
-        local proxy_config_type
+        local connection_type proxy_config_type
+
+        config_get connection_type "$section" "connection_type"
+        if [ "$connection_type" != "proxy" ]; then
+            return
+        fi
+
         config_get proxy_config_type "$section" "proxy_config_type"
         if [ "$proxy_config_type" = "subscription" ]; then
             has_subscription=1
@@ -614,7 +665,13 @@ subscription_update() {
 
     _update_subscription_for_section() {
         local section="$1"
-        local proxy_config_type subscription_url subscription_json_path
+        local connection_type proxy_config_type subscription_url subscription_json_path
+
+        config_get connection_type "$section" "connection_type"
+        if [ "$connection_type" != "proxy" ]; then
+            return
+        fi
+
 
         config_get proxy_config_type "$section" "proxy_config_type"
         if [ "$proxy_config_type" != "subscription" ]; then
@@ -1385,7 +1442,19 @@ configure_section_mixed_proxy() {
         log "Could not determine the listening IP address for the Mixed Proxy. The proxy will not be created." "warn"
         return 1
     fi
-    config_get mixed_proxy_port "$section" "mixed_proxy_port"
+    config_get mixed_proxy_port "$section" "mixed_proxy_port" "2080"
+
+    case "$mixed_proxy_port" in
+    '' | *[!0-9]*)
+        log "Invalid mixed_proxy_port '$mixed_proxy_port' for section '$section'. Falling back to 2080." "warn"
+        mixed_proxy_port="2080"
+        ;;
+    esac
+
+    if [ "$mixed_proxy_port" -lt 1 ] || [ "$mixed_proxy_port" -gt 65535 ]; then
+        log "mixed_proxy_port '$mixed_proxy_port' for section '$section' is out of range (1-65535). Falling back to 2080." "warn"
+        mixed_proxy_port="2080"
+    fi
     if [ "$mixed_inbound_enabled" -eq 1 ]; then
         mixed_inbound_tag="$(get_inbound_tag_by_section "$section-mixed")"
         mixed_outbound_tag="$(get_outbound_tag_by_section "$section")"
@@ -1686,11 +1755,8 @@ get_download_detour_tag() {
 _determine_first_outbound_section() {
     local section="$1"
 
-    local connection_type
-    config_get connection_type "$section" "connection_type"
-
-    if [ "$connection_type" = "proxy" ] || [ "$connection_type" = "vpn" ]; then
-        [ -z "$first_section" ] && first_section="$1"
+    if section_has_configured_outbound "$section"; then
+        [ -z "$first_section" ] && first_section="$section"
     fi
 }
 
