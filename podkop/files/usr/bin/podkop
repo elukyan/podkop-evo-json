@@ -851,7 +851,7 @@ configure_outbound_handler() {
             selector_tag="$(get_outbound_tag_by_section "$section")"
             selector_outbounds="$(comma_string_to_json_array "$outbound_tags")"
             config="$(sing_box_cm_add_selector_outbound "$config" "$selector_tag" "$selector_outbounds" \
-                "$default_outbound")"
+                "$default_outbound" "true")"
             ;;
         urltest)
             log "Detected proxy configuration type: urltest" "debug"
@@ -886,7 +886,7 @@ configure_outbound_handler() {
             selector_outbounds="$(comma_string_to_json_array "$outbound_tags,$urltest_tag")"
             config="$(sing_box_cm_add_urltest_outbound "$config" "$urltest_tag" "$urltest_outbounds" \
                 "$urltest_testing_url" "$urltest_check_interval" "$urltest_tolerance")"
-            config="$(sing_box_cm_add_selector_outbound "$config" "$selector_tag" "$selector_outbounds" "$urltest_tag")"
+            config="$(sing_box_cm_add_selector_outbound "$config" "$selector_tag" "$selector_outbounds" "$urltest_tag" "true")"
             ;;
         subscription)
             log "Detected proxy configuration type: subscription" "debug"
@@ -960,7 +960,7 @@ configure_outbound_handler() {
             selector_outbounds="$(comma_string_to_json_array "$SUBSCRIPTION_OUTBOUND_TAGS,$urltest_tag")"
             config="$(sing_box_cm_add_urltest_outbound "$config" "$urltest_tag" "$urltest_outbounds" \
                 "$urltest_testing_url" "$urltest_check_interval" "$urltest_tolerance")"
-            config="$(sing_box_cm_add_selector_outbound "$config" "$selector_tag" "$selector_outbounds" "$urltest_tag")"
+            config="$(sing_box_cm_add_selector_outbound "$config" "$selector_tag" "$selector_outbounds" "$urltest_tag" "true")"
             ;;
         *)
             log "Unknown proxy configuration type: '$proxy_config_type'. Aborted." "fatal"
