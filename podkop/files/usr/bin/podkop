@@ -568,6 +568,23 @@ add_subscription_cron_job() {
     } | crontab -
     log "The subscription cron job has been created: $cron_job"
 }
+ensure_nft_ready_for_list_update() {
+    if nft list table inet "$NFT_TABLE_NAME" > /dev/null 2>&1; then
+        return 0
+    fi
+
+    log "NFT table '$NFT_TABLE_NAME' is missing before lists update, recreating nft rules" "warn"
+    route_table_rule_mark
+    create_nft_rules
+
+    if ! nft list table inet "$NFT_TABLE_NAME" > /dev/null 2>&1; then
+        log "Failed to recreate NFT table '$NFT_TABLE_NAME'" "error"
+        return 1
+    fi
+
+    return 0
+}
+
 
 list_update() {
     echolog "🔄 Starting lists update..."
@@ -600,7 +617,7 @@ list_update() {
         local service_proxy_address
         service_proxy_address="$(get_service_proxy_address)"
 
-        if [ -n "$http_proxy_address" ]; then
+        if [ -n "$service_proxy_address" ]; then
             if curl -s -x "http://$service_proxy_address" -m $curl_timeout https://github.com > /dev/null; then
                 echolog "✅ GitHub connection check passed (via proxy)"
                 break
@@ -624,16 +641,23 @@ list_update() {
         return 1
     fi
 
+    if ! ensure_nft_ready_for_list_update; then
+        echolog "❌ NFT table is unavailable, cannot update lists"
+        return 1
+    fi
+
     echolog "📥 Downloading and processing lists..."
 
-    config_foreach import_community_subnet_lists "section"
-    config_foreach import_domains_from_remote_domain_lists "section"
-    config_foreach import_subnets_from_remote_subnet_lists "section"
+    local update_failed=0
+    config_foreach import_community_subnet_lists "section" || update_failed=1
+    config_foreach import_domains_from_remote_domain_lists "section" || update_failed=1
+    config_foreach import_subnets_from_remote_subnet_lists "section" || update_failed=1
 
-    if [ $? -eq 0 ]; then
+    if [ "$update_failed" -eq 0 ]; then
         echolog "✅ Lists update completed successfully"
     else
         echolog "❌ Lists update failed"
+        return 1
     fi
 }
 
@@ -1570,9 +1594,14 @@ import_community_service_subnet_list_handler() {
         ;;
     "discord")
         URL=$SUBNETS_DISCORD
-        nft_create_ipv4_set "$NFT_TABLE_NAME" "$NFT_DISCORD_SET_NAME"
-        nft add rule inet "$NFT_TABLE_NAME" mangle iifname "@$NFT_INTERFACE_SET_NAME" ip daddr \
-            "@$NFT_DISCORD_SET_NAME" udp dport '{ 50000-65535 }' meta mark set "$NFT_FAKEIP_MARK" counter
+        if ! nft list set inet "$NFT_TABLE_NAME" "$NFT_DISCORD_SET_NAME" > /dev/null 2>&1; then
+            nft_create_ipv4_set "$NFT_TABLE_NAME" "$NFT_DISCORD_SET_NAME"
+        fi
+        if ! nft list chain inet "$NFT_TABLE_NAME" mangle 2> /dev/null | \
+            grep -Fq "@$NFT_DISCORD_SET_NAME udp dport { 50000-65535 }"; then
+            nft add rule inet "$NFT_TABLE_NAME" mangle iifname "@$NFT_INTERFACE_SET_NAME" ip daddr \
+                "@$NFT_DISCORD_SET_NAME" udp dport '{ 50000-65535 }' meta mark set "$NFT_FAKEIP_MARK" counter
+        fi
         ;;
     "roblox")
         URL=$SUBNETS_ROBLOX
