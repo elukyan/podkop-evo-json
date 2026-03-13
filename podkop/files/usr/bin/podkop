@@ -818,6 +818,52 @@ sing_box_configure_outbounds() {
     config_foreach configure_outbound_handler "section"
 }
 
+sing_box_get_unique_outbound_tag() {
+    local config="$1"
+    local base_tag="$2"
+    local candidate="$base_tag"
+    local tag_suffix=1
+
+    while printf '%s' "$config" | jq -e --arg tag "$candidate" '.outbounds[]? | select(.tag == $tag)' > /dev/null 2>&1; do
+        candidate="${base_tag}-${tag_suffix}"
+        tag_suffix=$((tag_suffix + 1))
+    done
+
+    echo "$candidate"
+}
+
+sing_box_build_subscription_country_groups() {
+    local subscription_outbound_tags="$1"
+
+    printf '%s' "$subscription_outbound_tags" | jq -Rrc '
+        def is_regional_indicator: . >= 127462 and . <= 127487;
+        def extract_country_flag:
+            (. | explode) as $codepoints
+            | if ($codepoints | length) >= 2
+                and ($codepoints[0] | is_regional_indicator)
+                and ($codepoints[1] | is_regional_indicator)
+              then ($codepoints[0:2] | implode)
+              else ""
+              end;
+
+        (split(",") | map(select(length > 0))) as $tags
+        | reduce $tags[] as $tag (
+            {country_order: [], country_groups: {}, ungrouped: []};
+            ($tag | extract_country_flag) as $country_flag
+            | if $country_flag == "" then
+                .ungrouped += [$tag]
+              else
+                .country_groups[$country_flag] = ((.country_groups[$country_flag] // []) + [$tag])
+                | if (.country_order | index($country_flag)) == null then
+                    .country_order += [$country_flag]
+                  else
+                    .
+                  end
+              end
+        )
+    ' 2>/dev/null
+}
+
 configure_outbound_handler() {
     local section="$1"
 
@@ -915,12 +961,14 @@ configure_outbound_handler() {
         subscription)
             log "Detected proxy configuration type: subscription" "debug"
             local subscription_url subscription_json_path urltest_tag selector_tag \
-                urltest_outbounds selector_outbounds urltest_check_interval urltest_tolerance urltest_testing_url
+                urltest_outbounds selector_outbounds urltest_check_interval urltest_tolerance \
+                urltest_testing_url subscription_group_by_countries
 
             config_get subscription_url "$section" "subscription_url"
             config_get urltest_check_interval "$section" "urltest_check_interval" "3m"
             config_get urltest_tolerance "$section" "urltest_tolerance" 50
             config_get urltest_testing_url "$section" "urltest_testing_url" "https://www.gstatic.com/generate_204"
+            config_get_bool subscription_group_by_countries "$section" "subscription_group_by_countries" 0
 
             if [ -z "$subscription_url" ]; then
                 log "Subscription URL is not set. Aborted." "fatal"
@@ -977,14 +1025,62 @@ configure_outbound_handler() {
                 exit 1
             fi
 
-            # Create urltest + selector (like urltest proxy_config_type)
-            urltest_tag="$(get_outbound_tag_by_section "$section-urltest")"
             selector_tag="$(get_outbound_tag_by_section "$section")"
-            urltest_outbounds="$(comma_string_to_json_array "$SUBSCRIPTION_OUTBOUND_TAGS")"
-            selector_outbounds="$(comma_string_to_json_array "$SUBSCRIPTION_OUTBOUND_TAGS,$urltest_tag")"
-            config="$(sing_box_cm_add_urltest_outbound "$config" "$urltest_tag" "$urltest_outbounds" \
-                "$urltest_testing_url" "$urltest_check_interval" "$urltest_tolerance")"
-            config="$(sing_box_cm_add_selector_outbound "$config" "$selector_tag" "$selector_outbounds" "$urltest_tag" "true")"
+
+            if [ "$subscription_group_by_countries" -eq 1 ]; then
+                local grouping_json country_flag country_group_outbounds country_group_tag \
+                    selector_outbound_tags selector_default ungrouped_outbound_tags
+
+                grouping_json="$(sing_box_build_subscription_country_groups "$SUBSCRIPTION_OUTBOUND_TAGS")"
+                if [ -z "$grouping_json" ]; then
+                    log "Failed to build grouped subscription outbounds for section '$section'. Aborted." "fatal"
+                    exit 1
+                fi
+
+                for country_flag in $(echo "$grouping_json" | jq -r '.country_order[]' 2>/dev/null); do
+                    country_group_outbounds="$(echo "$grouping_json" | jq -c --arg country_flag "$country_flag" '.country_groups[$country_flag] // []' 2>/dev/null)"
+                    if [ -z "$country_group_outbounds" ] || [ "$country_group_outbounds" = "[]" ]; then
+                        continue
+                    fi
+
+                    country_group_tag="$(sing_box_get_unique_outbound_tag "$config" "$country_flag Fastest")"
+                    config="$(sing_box_cm_add_urltest_outbound "$config" "$country_group_tag" "$country_group_outbounds" \
+                        "$urltest_testing_url" "$urltest_check_interval" "$urltest_tolerance")"
+
+                    if [ -z "$selector_outbound_tags" ]; then
+                        selector_outbound_tags="$country_group_tag"
+                        selector_default="$country_group_tag"
+                    else
+                        selector_outbound_tags="$selector_outbound_tags,$country_group_tag"
+                    fi
+                done
+
+                ungrouped_outbound_tags="$(echo "$grouping_json" | jq -r '.ungrouped | join(",")' 2>/dev/null)"
+                if [ -n "$ungrouped_outbound_tags" ]; then
+                    if [ -z "$selector_outbound_tags" ]; then
+                        selector_outbound_tags="$ungrouped_outbound_tags"
+                        selector_default="${ungrouped_outbound_tags%%,*}"
+                    else
+                        selector_outbound_tags="$selector_outbound_tags,$ungrouped_outbound_tags"
+                    fi
+                fi
+
+                if [ -z "$selector_outbound_tags" ]; then
+                    log "No selector outbounds available after grouping subscription outbounds for section '$section'. Aborted." "fatal"
+                    exit 1
+                fi
+
+                selector_outbounds="$(comma_string_to_json_array "$selector_outbound_tags")"
+                config="$(sing_box_cm_add_selector_outbound "$config" "$selector_tag" "$selector_outbounds" "$selector_default" "true")"
+            else
+                # Create urltest + selector (default subscription behaviour)
+                urltest_tag="$(get_outbound_tag_by_section "$section-urltest")"
+                urltest_outbounds="$(comma_string_to_json_array "$SUBSCRIPTION_OUTBOUND_TAGS")"
+                selector_outbounds="$(comma_string_to_json_array "$SUBSCRIPTION_OUTBOUND_TAGS,$urltest_tag")"
+                config="$(sing_box_cm_add_urltest_outbound "$config" "$urltest_tag" "$urltest_outbounds" \
+                    "$urltest_testing_url" "$urltest_check_interval" "$urltest_tolerance")"
+                config="$(sing_box_cm_add_selector_outbound "$config" "$selector_tag" "$selector_outbounds" "$urltest_tag" "true")"
+            fi
             ;;
         *)
             log "Unknown proxy configuration type: '$proxy_config_type'. Aborted." "fatal"

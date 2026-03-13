@@ -119,6 +119,7 @@ export namespace Podkop {
     proxy_config_type: 'subscription';
     subscription_url: string;
     subscription_update_interval?: string;
+    subscription_group_by_countries?: '0' | '1';
   }
 
   export interface ConfigVpnSection {

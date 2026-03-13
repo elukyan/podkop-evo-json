@@ -122,6 +122,16 @@ function createSectionContent(section) {
   o.depends({ connection_type: "proxy", proxy_config_type: "subscription" });
 
   o = section.option(
+    form.Flag,
+    "subscription_group_by_countries",
+    _("Группировать по странам"),
+    _("Группирует прокси подписки по флагу страны в начале тега в отдельные URLTest-группы"),
+  );
+  o.default = "0";
+  o.rmempty = false;
+  o.depends({ connection_type: "proxy", proxy_config_type: "subscription" });
+
+  o = section.option(
     form.DynamicList,
     "selector_proxy_links",
     _("Selector Proxy Links"),
