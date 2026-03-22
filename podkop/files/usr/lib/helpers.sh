@@ -417,13 +417,11 @@ download_subscription() {
     local http_proxy_address="$3"
     local retries="${4:-3}"
     local wait="${5:-2}"
-
     local sb_version device_model kernel_version hwid
     sb_version="$(get_sing_box_version)"
     device_model="$(get_device_model)"
     kernel_version="$(get_kernel_version)"
     hwid="$(generate_hwid)"
-
     local header_args=""
     header_args="--header='User-Agent: singbox/$sb_version'"
     header_args="$header_args --header='X-HWID: $hwid'"
@@ -433,15 +431,124 @@ download_subscription() {
     header_args="$header_args --header='Accept-Language: ru-RU,en,*'"
     header_args="$header_args --header='X-Device-Locale: EN'"
 
+    local tmp_raw
+    tmp_raw="$(mktemp)"
+
+    local downloaded=0
     for attempt in $(seq 1 "$retries"); do
         if [ -n "$http_proxy_address" ]; then
             http_proxy="http://$http_proxy_address" https_proxy="http://$http_proxy_address" \
-                eval wget -O "$filepath" $header_args "$url" && break
+                eval wget -O "$tmp_raw" $header_args "$url"
         else
-            eval wget -O "$filepath" $header_args "$url" && break
+            eval wget -O "$tmp_raw" $header_args "$url"
         fi
-
+        if [ $? -eq 0 ]; then
+            downloaded=1
+            break
+        fi
         log "Attempt $attempt/$retries to download subscription from $url failed" "warn"
         sleep "$wait"
     done
+
+    if [ "$downloaded" -eq 0 ]; then
+        rm -f "$tmp_raw"
+        return 1
+    fi
+
+    # Определяем формат: уже sing-box JSON или base64-encoded список vless://
+    local first_char
+    first_char="$(head -c 1 "$tmp_raw")"
+
+    if [ "$first_char" = "{" ] || [ "$first_char" = "[" ]; then
+        # Уже готовый sing-box JSON — используем как есть
+        log "Subscription format: sing-box JSON" "info"
+        mv "$tmp_raw" "$filepath"
+        return 0
+    fi
+
+    # Пробуем декодировать как base64
+    log "Subscription format: base64, converting vless:// to sing-box JSON" "info"
+    local decoded
+    decoded="$(base64 -d "$tmp_raw" 2>/dev/null)"
+    rm -f "$tmp_raw"
+
+    if ! echo "$decoded" | grep -q "vless://"; then
+        log "Subscription: failed to decode base64 or no vless:// entries found" "error"
+        return 1
+    fi
+
+    # Конвертируем vless:// строки в sing-box JSON outbounds
+    local outbounds_json=""
+    local first=1
+
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        echo "$line" | grep -q "^vless://" || continue
+
+        if echo "$line" | grep -iq "Россия\|Russia\|ruРоссия"; then
+            continue
+        fi
+
+        local uri="${line#vless://}"
+
+        # Тег (после #) — сырые UTF-8 байты, decode не нужен
+        local tag
+        tag="$(echo "$uri" | sed 's/.*#//')"
+        tag="$(echo "$tag" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+
+        local uri_notag="${uri%%#*}"
+        local userinfo="${uri_notag%%\?*}"
+        local uuid="${userinfo%%@*}"
+        local hostport="${userinfo##*@}"
+        local host="${hostport%%:*}"
+        local port="${hostport##*:}"
+        local params="${uri_notag##*\?}"
+
+        local security type flow sni fp pbk sid
+        security="$(echo "$params" | grep -oE '(^|&)security=[^&]*' | cut -d= -f2)"
+        type="$(echo "$params"     | grep -oE '(^|&)type=[^&]*'     | cut -d= -f2)"
+        flow="$(echo "$params"     | grep -oE '(^|&)flow=[^&]*'     | cut -d= -f2)"
+        sni="$(echo "$params"      | grep -oE '(^|&)sni=[^&]*'      | cut -d= -f2)"
+        fp="$(echo "$params"       | grep -oE '(^|&)fp=[^&]*'       | cut -d= -f2)"
+        pbk="$(echo "$params"      | grep -oE '(^|&)pbk=[^&]*'      | cut -d= -f2)"
+        sid="$(echo "$params"      | grep -oE '(^|&)sid=[^&]*'      | cut -d= -f2)"
+
+        [ -z "$type" ]     && type="tcp"
+        [ -z "$security" ] && security="none"
+        [ -z "$fp" ]       && fp="chrome"
+
+        local tls_block=""
+        if [ "$security" = "reality" ]; then
+            tls_block="\"tls\":{\"enabled\":true,\"server_name\":\"$sni\",\"utls\":{\"enabled\":true,\"fingerprint\":\"$fp\"},\"reality\":{\"enabled\":true,\"public_key\":\"$pbk\",\"short_id\":\"$sid\"}}"
+        elif [ "$security" = "tls" ]; then
+            tls_block="\"tls\":{\"enabled\":true,\"server_name\":\"$sni\"}"
+        fi
+
+        local flow_block=""
+        [ -n "$flow" ] && flow_block="\"flow\":\"$flow\","
+
+        local tls_sep=""
+        [ -n "$tls_block" ] && tls_sep=",$tls_block"
+
+        local obj="{\"type\":\"vless\",\"tag\":\"$tag\",\"server\":\"$host\",\"server_port\":$port,\"uuid\":\"$uuid\",${flow_block}\"packet_encoding\":\"xudp\"${tls_sep}}"
+
+        if [ "$first" = "1" ]; then
+            outbounds_json="$obj"
+            first=0
+        else
+            outbounds_json="$outbounds_json,$obj"
+        fi
+    done << VLESSEOF
+$decoded
+VLESSEOF
+
+    if [ -z "$outbounds_json" ]; then
+        log "Subscription: no valid vless:// outbounds converted" "error"
+        return 1
+    fi
+
+    printf '{"outbounds":[%s]}' "$outbounds_json" > "$filepath"
+    local count
+    count="$(echo "$outbounds_json" | grep -o '"type":"vless"' | wc -l)"
+    log "Subscription: converted $count vless:// outbounds to sing-box JSON" "info"
 }
