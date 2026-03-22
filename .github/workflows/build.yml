@@ -30,7 +30,7 @@ jobs:
       matrix:
         include:
           - { package_type: ipk }
-          - { package_type: apk }
+#          - { package_type: apk }
     steps:
       - uses: actions/checkout@v5.0.0
         with:
