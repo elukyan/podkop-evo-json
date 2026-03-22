@@ -29,7 +29,7 @@ https://podkop.net/
 
 Вкратце, достаточно одного скрипта для установки и обновления:
 ```
-sh <(wget -O - https://raw.githubusercontent.com/yandexru45/podkop-evolution/refs/heads/main/install.sh)
+sh <(wget -O - https://raw.githubusercontent.com/elukyan/podkop-evo-json/refs/heads/main/install.sh)
 ```
 
 ## Новое в этом форке: Подписки (Subscription)
