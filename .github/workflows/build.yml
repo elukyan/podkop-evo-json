@@ -103,11 +103,11 @@ jobs:
           name: release-files-${{ github.ref_name }}-ipk
           path: ./filtered-bin/release
 
-      - name: Download apk artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: release-files-${{ github.ref_name }}-apk
-          path: ./filtered-bin/release
+#      - name: Download apk artifacts
+#        uses: actions/download-artifact@v4
+#        with:
+#          name: release-files-${{ github.ref_name }}-apk
+#          path: ./filtered-bin/release
 
       - name: Release
         uses: softprops/action-gh-release@v2.4.0
