@@ -2,3 +2,6 @@
 fe-app-podkop/node_modules
 fe-app-podkop/.env
 .DS_Store
+output/
+patch_helpers.sh
+podkop/files/usr/lib/helpers.sh.bak
