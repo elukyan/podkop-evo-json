@@ -5,7 +5,7 @@
 > Этот форк добавляет поддержку ссылок подписки (subscription URL) с кастомными заголовками (HWID, Device-OS, Device-Model) и автоматическим обновлением. Основан на [itdoginfo/podkop](https://github.com/itdoginfo/podkop).
 >
 > Дополнительно добавлена поддержка подписок с прямыми ссылками на vless сервера:
-> Add base64 subscription support with vless:// to sing-box JSON conversion
+> 
 > - Auto-detect subscription format (base64 vs sing-box JSON)
 > - Convert base64-encoded vless:// URIs to sing-box outbounds
 > - Fix wget exit code handling in ash (OpenWrt busybox)
